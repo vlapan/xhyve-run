@@ -221,26 +221,63 @@ if [ "install" = "$CMD" ]; then
 		BOOTVOLUME=$ARG_ISO
 	else
 		# Check FreeBSD installer image
-		FBSD_FTP_ISODIR="ftp://ftp.freebsd.org/pub/FreeBSD/releases/amd64/amd64/ISO-IMAGES"
-		FBSD_VERSION=$(/usr/bin/curl -l $FBSD_FTP_ISODIR/ 2>/dev/null | sort -rn | head -1 || echo '')
-		if [ -z "$FBSD_VERSION" ]; then
+		FBSD_ARCH=amd64
+		CURL=/usr/bin/curl
+		FBSD_FTP_ISODIR="https://download.freebsd.org/ftp/releases/$FBSD_ARCH/$FBSD_ARCH/ISO-IMAGES"
+		FBSD_VERSIONS=$($CURL $FBSD_FTP_ISODIR/ 2>/dev/null | grep -ow 'title="[0-9\.]\+"' | cut -f2 -d'"' | sort -rn || echo '')
+		echo "$(date +%s):VM:$NAME: FreeBSD versions: $(echo $FBSD_VERSIONS)"
+
+		if [ -z "$FBSD_VERSIONS" ]; then
 			BOOTVOLUME=$(find iso -type f -print0 | xargs -0 stat -f "%m %N" | sort -rn | head -1 | cut -f2- -d" ")
 			if [ -z "$BOOTVOLUME" ]; then
 				echo 'Looks like there is no network and no installer images in iso directory, giving up.'
 				exit
 			fi
 		else
-			FILE_ISO="FreeBSD-$FBSD_VERSION-RELEASE-amd64-bootonly.iso"
+			COUNTER=1
+			while true; do
+				FBSD_VERSION=$(echo "$FBSD_VERSIONS" | head -${COUNTER} | tail -1)
+				echo "$(date +%s):VM:$NAME: $FBSD_VERSION checking..."
+				FILE_CHECKSUM="CHECKSUM.SHA512-FreeBSD-$FBSD_VERSION-RELEASE-$FBSD_ARCH"
+				FILE_CHECKSUM_PATH=iso/$FILE_CHECKSUM
+				FBSD_VERSION_LIST=$($CURL $FBSD_FTP_ISODIR/$FBSD_VERSION/ 2>/dev/null)
+				if echo "$FBSD_VERSION_LIST" | grep -qw $FILE_CHECKSUM; then
+					echo "$(date +%s):VM:$NAME: $FBSD_VERSION: release found"
+					break;
+				else
+					echo "$(date +%s):VM:$NAME: $FBSD_VERSION: no release found"
+				fi
+				COUNTER=$((COUNTER+1))
+			done
+
+			FILE_ISO="FreeBSD-$FBSD_VERSION-RELEASE-$FBSD_ARCH-disc1.iso"
 			BOOTVOLUME=iso/$FILE_ISO
 			if [ ! -f "$BOOTVOLUME" ]; then
-				echo "$(date +%s):VM:$NAME: downloading latest installer..."
-				/usr/bin/curl $FBSD_FTP_ISODIR/$FBSD_VERSION/$FILE_ISO.xz | xz -dc > $BOOTVOLUME
+				FILE_INSTALLER_URL=$FBSD_FTP_ISODIR/$FBSD_VERSION/$FILE_ISO.xz
+				echo "$(date +%s):VM:$NAME: downloading latest installer($FILE_INSTALLER_URL)..."
+				if $CURL -I $FILE_INSTALLER_URL 2>/dev/null | head -1 | grep -qwv 200; then
+					echo "$(date +%s):VM:$NAME: error: bad url: $FILE_INSTALLER_URL: giving up!"
+					exit
+				fi
+				$CURL $FILE_INSTALLER_URL | xz -dc > $BOOTVOLUME
 				if [ ! -f "$BOOTVOLUME" ]; then
 					echo "$(date +%s):VM:$NAME: error: file not found: $BOOTVOLUME: giving up!"
 					exit
 				fi
 				ISO_SIZE=$(stat -f%z $BOOTVOLUME | awk '{$1=$1/1024/1024;printf "%.0fm\n",$1}')
-				echo "$(date +%s):VM:$NAME: installer found: $ISO_SIZE"
+				echo "$(date +%s):VM:$NAME: $FILE_ISO: installer found: $ISO_SIZE"
+			fi
+
+			echo "$(date +%s):VM:$NAME: downloading checksum file..."
+			$CURL $FBSD_FTP_ISODIR/$FBSD_VERSION/$FILE_CHECKSUM > $FILE_CHECKSUM_PATH 2>/dev/null
+			CHECKSUM=$(sha512sum $BOOTVOLUME | cut -f1 -d' ')
+			CHECKSUM_EXPECTED=$(cat $FILE_CHECKSUM_PATH | grep "($FILE_ISO)" | cut -f2 -d= | tr -d ' ')
+			if [ "$CHECKSUM" = "$CHECKSUM_EXPECTED" ]; then
+				echo "$(date +%s):VM:$NAME: $FILE_ISO: checksum verified"
+			else
+				echo "$(date +%s):VM:$NAME: $FILE_ISO: checksum failed, please re-run script"
+				rm $BOOTVOLUME
+				exit 1
 			fi
 		fi
 	fi
