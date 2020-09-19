@@ -20,6 +20,13 @@ if [ ! -x $ARPING ]; then
 	exit
 fi
 
+TRUNCATE=/usr/local/bin/truncate
+if [ ! -x $TRUNCATE ]; then
+	echo "truncate is required: brew install coreutils"
+	echo "http://brew.sh/"
+	exit
+fi
+
 NAME=$1
 CMD=$2
 
