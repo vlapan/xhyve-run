@@ -134,7 +134,7 @@ NICE="$([ -z "$ARG_NICE" ] && echo '0' || echo $ARG_NICE)"
 
 IFACE="bridge100"
 
-mkdir -p img
+mkdir -p img iso
 
 IMG="img/$NAME.img"
 UUIDFILE="img/$NAME.uuid"
